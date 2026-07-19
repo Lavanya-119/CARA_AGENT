@@ -1,0 +1,21 @@
+version: "3.9"
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
+      - GROQ_MODEL=${GROQ_MODEL:-openai/gpt-oss-20b}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173}
+      - CHROMA_PERSIST_DIR=/data/chroma_store
+      - WHISPER_MODEL_SIZE=${WHISPER_MODEL_SIZE:-small}
+    volumes:
+      # Persist indexed documents across restarts/redeploys.
+      - chroma_data:/data/chroma_store
+    restart: unless-stopped
+
+volumes:
+  chroma_data:
