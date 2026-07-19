@@ -1,36 +1,30 @@
-# CARA frontend — production image (self-hosted option)
-# Builds the static Vite bundle, then serves it with nginx.
-#
-# IMPORTANT: VITE_API_URL is baked in at BUILD time, not runtime, because
-# Vite inlines import.meta.env.* into the compiled JS. Pass it as a build
-# arg pointing at your deployed backend's public URL before building this
-# image. If you deploy the frontend on Vercel/Netlify instead (recommended
-# for most cases — see DEPLOYMENT.md), you don't need this file at all.
+# CARA backend — production image
+# Pre-downloads the sentence-transformers embedding model at build time so
+# the first real request isn't slow. Voice transcription is handled by
+# Groq's hosted Whisper API (not a local model), so no ffmpeg or local
+# Whisper download is needed here.
 
-FROM node:20-slim AS build
+FROM python:3.11-slim
+
 WORKDIR /app
 
-ARG VITE_API_URL
-ENV VITE_API_URL=${VITE_API_URL}
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-COPY package.json package-lock.json ./
-RUN npm ci
+# Pre-download the sentence-transformers embedding model at build time, so
+# the running container doesn't stall on its first request while it fetches
+# the model weights.
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 
 COPY . .
-RUN npm run build
 
-FROM nginx:1.27-alpine
-COPY --from=build /app/dist /usr/share/nginx/html
+# Chroma's persistent store lives here — mount a volume at this path in
+# production so indexed documents survive container restarts/redeploys.
+ENV CHROMA_PERSIST_DIR=/data/chroma_store
+RUN mkdir -p /data/chroma_store
 
-# TanStack Router is a client-side SPA — any unknown path must fall back to
-# index.html so client-side routing (e.g. a direct link to /voice) works.
-RUN printf 'server {\n\
-    listen 80;\n\
-    root /usr/share/nginx/html;\n\
-    index index.html;\n\
-    location / {\n\
-        try_files $uri /index.html;\n\
-    }\n\
-}\n' > /etc/nginx/conf.d/default.conf
+EXPOSE 8000
 
-EXPOSE 80
+# No --reload in production: it would re-import this module (and reload the
+# embedding model) on every filesystem event, wasting memory and time.
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
